@@ -1,29 +1,13 @@
 // script.js
 
+//
+// SETUP
+//
+
 // global variables
 var data;     // parsed data object containing all necessary information 
-var indexSet; // set containing installed packages
+var indexSet; // set containing the names of installed packages
 
-// give data a value for testing
-data = {
-	"packageB": {
-		"name": "packageB",
-		"description": "anotherDescription",
-		"dependencies": ["packageBB", "packageBC", "packageA"],
-		"reverseDependencies": ["revdep1"]
-	},
-	"packageA": {
-		"name": "packageA",
-		"description": "aDescription",
-		"dependencies": ["packageAB", "packageAC"],
-		"reverseDependencies": ["revdep1", "packageB"]
-	}
-};
-
-// set event listener for uploading the poetry.lock file
-const inputElement = document.getElementById("file-input");
-inputElement.addEventListener("change", handleFileAndBuildIndex, false);
-//
 // utility function for partial application
 const partial = (fn, firstArg) => {
 	return (...lastArgs) => {
@@ -31,41 +15,46 @@ const partial = (fn, firstArg) => {
 	}
 };
 
-/*
-function waitToBuildIndex() {
-	if(poetryFileString) {
-		buildIndex(poetryFileString);
-	} else {
-		setTimeout(waitToBuildIndex, 500);
-	}
-}
-*/
+// set event listener for uploading the poetry.lock file
+const inputElement = document.getElementById("file-input");
+inputElement.addEventListener("change", handleFileAndBuildIndex, false);
 
-function handleFileAndBuildIndex(event) {
+
+// 
+// FILE UPLOAD
+//
+async function handleFileAndBuildIndex(event) {
 	const input = event.target;
 	if ('files' in input && input.files.length > 0) {
-    const poetryFileString = saveFileContent(input.files[0]);
-	  //data = parse(poetryFileString); // save parsed data in global variable
-	  indexSet = new Set(Object.keys(data)); // set containing index entries in global variable
+    const poetryFileString = await readFileContent(input.files[0]);
+   // console.log("poetryFileString: ", poetryFileString);
+	  data = parser(poetryFileString, 0, {}); // global variable
+	  indexSet = new Set(Object.keys(data));  // global variable
 		buildIndex();
   }
 }
 
+/*
 function saveFileContent(file) {
   readFileContent(file).then(content => {
     return content;
   }).catch(error => console.log(error))
 }
+*/
 
 function readFileContent(file) {
   const reader = new FileReader();
   return new Promise((resolve, reject) => {
-    reader.onload = event => resolve(event.target.result);
+    reader.onload = event => {console.log(event.target.result); resolve(event.target.result); };
+    //reader.onload = event => resolve(event.target.result);
     reader.onerror = error => reject(error);
     reader.readAsText(file);
   })
 }
 
+//
+// VIEW BUILDERS
+//
 function buildIndex() {
 	const content = document.getElementById("content");
 	let newContent = document.createElement("div");
@@ -99,7 +88,7 @@ function buildPage(packageName) {
 	addTitle(newContent, packageName);
 	addDescription(newContent, packageName);
 	addDependencies(newContent, packageName);
-	addReverseDependencies(newContent, packageName);
+	//addReverseDependencies(newContent, packageName);
 
 	document.body.replaceChild(newContent, content);
 }
@@ -166,3 +155,88 @@ function addReverseDependencies(newContent, packageName) {
 	newContent.appendChild(revDeps);
 }
 
+//
+// PARSER
+//
+function packageIndices(textString) {
+	let endIdx = textString.indexOf("[package.dependencies]");
+	if (endIdx === -1) { endIdx = textString.indexOf("[package.extras]") };
+	if (endIdx === -1) { endIdx = textString.length };
+	return [0, endIdx];
+}
+
+function packageParser(textString) {
+	[startIdx, endIdx] = packageIndices(textString);
+	let segment = textString.slice(startIdx,endIdx);
+	//matching
+	let nameMatch = segment.match(/\bname\s*=\s*"(\S+)"/);
+	let name;
+	if(nameMatch === null) { name = null } else { name = nameMatch[1]; }
+	let descMatch = segment.match(/\bdescription\s*=\s*"([^"]+)"/);
+	let description;
+	if(descMatch === null ) { description = "" } else { description = descMatch[1] };
+	return [name, description];
+}
+
+function dependenciesIndices(textString) {
+	let startIdx = textString.indexOf("[package.dependencies]",0);
+	if (startIdx === -1) { return [-1, -1] }; // not found
+	if (startIdx === -1) { return [] };
+	startIdx += "[package.dependencies]".length;
+	let endIdx = textString.indexOf("[package.extras]",startIdx); // check for bugs!
+  if (endIdx === -1) { endIdx = textString.length; };
+  return [startIdx, endIdx];
+}
+
+function dependenciesParser(textString) {
+	[startIdx, endIdx] = dependenciesIndices(textString);
+	if(startIdx === -1 && endIdx === -1) {return []};
+	let segment = textString.slice(startIdx, endIdx);
+	// matching
+	let re = /\n\b(\S+)\s*=/g;
+  let deps = Array.from(segment.matchAll(re), m => m[1]);
+  return deps;
+}
+
+function extrasIndices(textString) {
+	let startIdx = textString.indexOf("[package.extras]",0);
+	if (startIdx === -1) { return [-1, -1] }; // not found
+	startIdx += "[package.extras]".length;
+  let endIdx = textString.indexOf("\n[", startIdx);
+  if (endIdx === -1) { endIdx = textString.length; };
+  return [startIdx, endIdx];
+}
+
+function extrasParser(textString) {
+	[startIdx, endIdx] = extrasIndices(textString);
+	if(startIdx === -1 && endIdx === -1) {return []};
+	let segment = textString.slice(startIdx, endIdx);
+	// matching
+	let re = /"([^"]+)"/g;
+  let extraDepsWithVersions = Array.from(segment.matchAll(re), m => m[1]);
+  let extraDeps = extraDepsWithVersions.map(s => s.split(" ")[0]);
+  return extraDeps;
+}
+
+function parser(fileString, idx, value) {
+	if(idx >= fileString.length-1) { return value; }
+	
+	let startIdx = fileString.indexOf("[[package]]",idx);
+	if (startIdx === -1) { return value; };
+	startIdx += "[[package]]".length;
+	let endIdx = fileString.indexOf("[[package]]",startIdx); // check for bugs!
+	if (endIdx === -1) { endIdx = fileString.length };
+	let segment = fileString.slice(startIdx, endIdx);
+	
+	let [name, description] = packageParser(segment);
+	let regularDeps = dependenciesParser(segment);
+	let extraDeps = extrasParser(segment);
+	let dependencies = [ ...new Set( [...regularDeps, ...extraDeps ] ) ].sort();
+
+	value[name] = {
+		"description": description,
+		"dependencies": dependencies
+	};
+		
+	return parser(fileString, endIdx, value);
+}
