@@ -30,6 +30,7 @@ async function handleFileAndBuildIndex(event) {
    // console.log("poetryFileString: ", poetryFileString);
 	  data = parser(poetryFileString, 0, {}); // global variable
 	  indexSet = new Set(Object.keys(data));  // global variable
+    addReverseDeps(data);
 		buildIndex();
   }
 }
@@ -88,7 +89,7 @@ function buildPage(packageName) {
 	addTitle(newContent, packageName);
 	addDescription(newContent, packageName);
 	addDependencies(newContent, packageName);
-	//addReverseDependencies(newContent, packageName);
+	addReverseDependencies(newContent, packageName);
 
 	document.body.replaceChild(newContent, content);
 }
@@ -235,8 +236,23 @@ function parser(fileString, idx, value) {
 
 	value[name] = {
 		"description": description,
-		"dependencies": dependencies
+		"dependencies": dependencies,
+		"reverseDependencies": []
 	};
 		
 	return parser(fileString, endIdx, value);
+}
+
+function addReverseDeps(data) {
+	for (package in data) {
+		console.log(data[package]);
+		data[package].dependencies.forEach( dep => {
+			if( indexSet.has(dep) ) {
+				data[dep]["reverseDependencies"].push(package);
+			}
+		});
+	}
+	for (package in data) {
+		data[package]["reverseDependencies"].sort();
+	}
 }
